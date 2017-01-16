@@ -1,0 +1,5 @@
+package com.jaspersoft.cs.processors.filter;
+
+public class ExternalUserFolderProcessorFilter {
+
+}

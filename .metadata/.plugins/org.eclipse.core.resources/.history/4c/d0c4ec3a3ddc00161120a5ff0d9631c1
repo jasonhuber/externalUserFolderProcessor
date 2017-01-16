@@ -1,0 +1,131 @@
+package com.jaspersoft.cs.processors.filter;
+
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.FilterConfig;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.util.Assert;
+
+import com.jaspersoft.jasperserver.api.common.domain.ExecutionContext;
+import com.jaspersoft.jasperserver.api.common.domain.impl.ExecutionContextImpl;
+import com.jaspersoft.jasperserver.api.metadata.common.domain.Folder;
+import com.jaspersoft.jasperserver.api.metadata.common.domain.client.FolderImpl;
+import com.jaspersoft.jasperserver.api.metadata.common.util.RepositoryLabelIDHelper;
+import com.jaspersoft.jasperserver.api.metadata.security.JasperServerPermission;
+import com.jaspersoft.jasperserver.api.metadata.user.domain.ObjectPermission;
+import com.jaspersoft.jasperserver.api.metadata.user.domain.User;
+import com.jaspersoft.jasperserver.api.metadata.user.service.ObjectPermissionService;
+import com.jaspersoft.jasperserver.api.metadata.user.service.ProfileAttributeService;
+import com.jaspersoft.jasperserver.api.security.externalAuth.processors.AbstractExternalUserProcessor;
+
+public class ExternalUserFolderProcessorFilter extends AbstractExternalUserProcessor  implements InitializingBean, Filter {
+
+	private static Log log = LogFactory.getLog(ExternalUserFolderProcessorFilter.class);
+
+	private ProfileAttributeService profileAttributeService;
+
+	   // the parent folder to create user directories under. default value is root.
+    private String userFoldersParentDirectory = "";
+
+	/**
+	 * this filter will be executed after the JIAuthenticationSynchronizer.
+	 * a new user details object will exist in the session, which can be used to persist profile attributes.
+	 * this filter will only execute if the clientAuth parameter is found in the request, to prevent execution on every request.
+	 */
+	public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws IOException, ServletException {
+	    if (getRepositoryService().getFolder(new ExecutionContextImpl(), getUserFolderPathUri())==null){
+            createUserFolder();
+        }
+	    
+	    chain.doFilter(request, response);
+	}
+	
+	  // checks if user has a folder on his name in the configured location, if not creates one
+    @Override
+    public void process() {
+//        multiTenancyRepositoryContextManager.create
+        if (getRepositoryService().getFolder(new ExecutionContextImpl(), getUserFolderPathUri())==null){
+            createUserFolder();
+        }
+    }
+    
+	 private void createUserFolder() {
+	        User currentUser = (User)SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+
+	        // this operation is an administration operation so we need to be in priviliged mode
+	        // adding a privileged attribute to the context to avoid the access denied.
+	        ExecutionContext context = new ExecutionContextImpl();
+	        List<String> contextAttributes = new ArrayList<String>();
+	        contextAttributes.add(ObjectPermissionService.PRIVILEGED_OPERATION);
+	        context.setAttributes(contextAttributes);
+
+	        // preparing the folder
+	        String folderName = currentUser.getUsername();
+	        Folder folder = new FolderImpl();
+	        String generatedId = RepositoryLabelIDHelper.generateIdBasedOnLabel(getRepositoryService(), userFoldersParentDirectory, folderName);
+	        folder.setParentFolder(userFoldersParentDirectory);
+	        folder.setName(generatedId);
+	        folder.setLabel(folderName);
+	        folder.setDescription("Default user folder");// not I18N ? 2014-03-08 rfaber
+	        getRepositoryService().saveFolder(context, folder);
+	        log.debug("folder "+folder.getName()+" was created for.");
+
+	        // setting the permission only for the user
+	        ObjectPermission userFolderPermission = getObjectPermissionService().newObjectPermission(context);
+	        userFolderPermission.setURI(folder.getURI());
+	        userFolderPermission.setPermissionRecipient(currentUser);
+	        userFolderPermission.setPermissionMask(JasperServerPermission.READ_WRITE_CREATE_DELETE.getMask());
+
+	        getObjectPermissionService().putObjectPermission(context, userFolderPermission);
+	    }
+	    private String getUserFolderPathUri() {
+	        return getUserFoldersParentDirectory() + "/" + ((User)SecurityContextHolder.getContext().getAuthentication().getPrincipal()).getUsername();
+	    }
+	    public String getUserFoldersParentDirectory() {
+	        return userFoldersParentDirectory;
+	    }
+	    public void setUserFoldersParentDirectory(String userFoldersParentDirectory) {
+	        this.userFoldersParentDirectory = userFoldersParentDirectory;
+	    }
+
+	// -- helper methods
+
+	@Override
+	public void afterPropertiesSet() throws Exception {
+		Assert.notNull(profileAttributeService);
+		//Assert.notNull(profileAttrName);
+	}
+
+	@Override
+	public void destroy() {
+
+	}
+
+	@Override
+	public void init(FilterConfig arg0) throws ServletException {
+	
+	}
+
+	// getter and setter methods for bean properties
+
+	public ProfileAttributeService getProfileAttributeService() {
+		return profileAttributeService;
+	}
+
+	public void setProfileAttributeService(ProfileAttributeService profileAttrService) {
+		profileAttributeService = profileAttrService;
+	}
+
+}
